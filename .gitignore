@@ -1,0 +1,13 @@
+# v86 emulator binaries (downloaded by deploy.sh)
+libv86.js
+v86.wasm
+seabios.bin
+vgabios.bin
+
+# Pintos disk image (built by build.sh)
+cs162proj.dsk
+
+# OS/editor files
+.DS_Store
+*.swp
+*~

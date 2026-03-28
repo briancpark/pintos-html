@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pintos OS - CS 162 Shell</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0a;
+            color: #e0e0e0;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 { color: #4fc3f7; margin-bottom: 5px; font-size: 1.8em; }
+        .subtitle { color: #78909c; margin-bottom: 20px; font-size: 0.9em; }
+        #term {
+            background: #000;
+            border: 2px solid #333;
+            border-radius: 8px;
+            width: 740px;
+            height: 500px;
+            overflow-y: auto;
+            padding: 12px;
+            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-size: 14px;
+            line-height: 1.2;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            color: #b0bec5;
+            cursor: text;
+        }
+        #term:focus { outline: none; border-color: #4fc3f7; }
+        #screen_container { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+        .controls { margin-top: 15px; display: flex; gap: 10px; }
+        button {
+            background: #1a1a2e; color: #4fc3f7; border: 1px solid #4fc3f7;
+            padding: 8px 20px; border-radius: 4px; cursor: pointer;
+            font-family: inherit; font-size: 0.9em; transition: all 0.2s;
+        }
+        button:hover { background: #4fc3f7; color: #0a0a0a; }
+        #audio-btn { border-color: #ffa726; color: #ffa726; }
+        #audio-btn.enabled { border-color: #66bb6a; color: #66bb6a; }
+        .info { margin-top: 20px; color: #78909c; font-size: 0.8em; max-width: 720px; text-align: center; line-height: 1.5; }
+        .info code { background: #1a1a2e; padding: 2px 6px; border-radius: 3px; color: #4fc3f7; }
+        .status { margin-top: 10px; font-size: 0.85em; color: #66bb6a; }
+    </style>
+</head>
+<body>
+    <h1>Pintos OS</h1>
+    <p class="subtitle">UC Berkeley CS 162 - Running in your browser via v86 x86 emulator</p>
+    <div id="term" tabindex="0"></div>
+    <div id="screen_container"><div></div><canvas></canvas></div>
+    <div class="controls">
+        <button onclick="resetEmulator()">Restart</button>
+        <button onclick="emulator.stop()">Pause</button>
+        <button onclick="emulator.run()">Resume</button>
+        <button id="audio-btn" onclick="enableAudio()">Enable Audio</button>
+    </div>
+    <p class="status" id="status">Loading Pintos kernel...</p>
+    <div class="info">
+        <p>This is a real Pintos OS kernel booting in a JavaScript x86 emulator. Click the terminal to type.</p>
+        <p>Available commands: <code>ls</code> <code>cat</code> <code>echo</code> <code>cp</code> <code>cmp</code>
+        <code>mkdir</code> <code>pwd</code> <code>rm</code> <code>hex-dump</code> <code>halt</code></p>
+        <p>Try: <code>railroad162</code> (plays music!), <code>cat file1.txt</code>, or <code>echo hello world</code></p>
+    </div>
+    <script src="libv86.js"></script>
+    <script>
+    "use strict";
+    var emulator;
+    var term = document.getElementById("term");
+    var audioEnabled = false;
+
+    var SCANCODES = {
+        "a":0x1E,"b":0x30,"c":0x2E,"d":0x20,"e":0x12,"f":0x21,"g":0x22,
+        "h":0x23,"i":0x17,"j":0x24,"k":0x25,"l":0x26,"m":0x32,"n":0x31,
+        "o":0x18,"p":0x19,"q":0x10,"r":0x13,"s":0x1F,"t":0x14,"u":0x16,
+        "v":0x2F,"w":0x11,"x":0x2D,"y":0x15,"z":0x2C,
+        "1":0x02,"2":0x03,"3":0x04,"4":0x05,"5":0x06,"6":0x07,"7":0x08,
+        "8":0x09,"9":0x0A,"0":0x0B,
+        " ":0x39,"-":0x0C,"=":0x0D,"[":0x1A,"]":0x1B,";":0x27,
+        "'":0x28,"`":0x29,"\\":0x2B,",":0x33,".":0x34,"/":0x35
+    };
+    var SHIFT_MAP = {
+        "!":"1","@":"2","#":"3","$":"4","%":"5","^":"6","&":"7","*":"8",
+        "(":"9",")":"0","_":"-","+":"=","{":"[","}":"]",":":";",
+        "\"":"'","~":"`","|":"\\","<":",",">":".","?":"/"
+    };
+    var LSHIFT = 0x2A;
+
+    function sendKey(ch) {
+        if (!emulator || !emulator.is_running()) return;
+        var needShift = false;
+        var base = ch.toLowerCase();
+        if (SHIFT_MAP[ch]) { base = SHIFT_MAP[ch]; needShift = true; }
+        else if (ch >= "A" && ch <= "Z") { base = ch.toLowerCase(); needShift = true; }
+        var code = SCANCODES[base];
+        if (code === undefined) return;
+        var codes = [];
+        if (needShift) codes.push(LSHIFT);
+        codes.push(code);
+        codes.push(code | 0x80);
+        if (needShift) codes.push(LSHIFT | 0x80);
+        emulator.keyboard_send_scancodes(codes);
+    }
+
+    function enableAudio() {
+        if (!emulator) return;
+        // Resume the AudioContext that v86 created for the PC speaker
+        if (emulator.speaker_adapter && emulator.speaker_adapter.audio_context) {
+            emulator.speaker_adapter.audio_context.resume().then(function() {
+                audioEnabled = true;
+                var btn = document.getElementById("audio-btn");
+                btn.textContent = "Audio Enabled";
+                btn.classList.add("enabled");
+            });
+        }
+    }
+
+    term.addEventListener("keydown", function(e) {
+        if (!emulator || !emulator.is_running()) return;
+        e.preventDefault();
+        // Auto-enable audio on first keypress
+        if (!audioEnabled) enableAudio();
+        if (e.key === "Enter") {
+            emulator.keyboard_send_scancodes([0x1C, 0x9C]);
+        } else if (e.key === "Backspace") {
+            emulator.keyboard_send_scancodes([0x0E, 0x8E]);
+        } else if (e.key === "Tab") {
+            emulator.keyboard_send_scancodes([0x0F, 0x8F]);
+        } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+            sendKey(e.key);
+        }
+    });
+
+    term.addEventListener("click", function() {
+        term.focus();
+        if (!audioEnabled) enableAudio();
+    });
+
+    window.onload = function() {
+        emulator = new V86({
+            wasm_path: "v86.wasm",
+            memory_size: 32 * 1024 * 1024,
+            vga_memory_size: 2 * 1024 * 1024,
+            screen_container: document.getElementById("screen_container"),
+            bios: { url: "seabios.bin" },
+            vga_bios: { url: "vgabios.bin" },
+            hda: { url: "cs162proj.dsk" },
+            autostart: true,
+            disable_mouse: true,
+            disable_keyboard: true,
+        });
+
+        emulator.add_listener("serial0-output-byte", function(byte) {
+            var ch = String.fromCharCode(byte);
+            if (byte === 0x08) {
+                term.textContent = term.textContent.slice(0, -1);
+            } else {
+                term.textContent += ch;
+            }
+            term.scrollTop = term.scrollHeight;
+        });
+
+        emulator.add_listener("emulator-ready", function() {
+            document.getElementById("status").textContent = "Pintos kernel booted! Click terminal to type.";
+            document.getElementById("status").style.color = "#66bb6a";
+            term.focus();
+        });
+    };
+
+    function resetEmulator() {
+        term.textContent = "";
+        emulator.restart();
+        document.getElementById("status").textContent = "Restarting...";
+    }
+    </script>
+    <p style="margin-top: 30px; color: #546e7a; font-size: 0.75em;">Created by Brian Park</p>
+</body>
+</html>

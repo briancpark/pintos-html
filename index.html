@@ -131,14 +131,55 @@
     }
 
     function enableAudio() {
-        if (!emulator) return;
-        if (emulator.speaker_adapter && emulator.speaker_adapter.audio_context) {
-            emulator.speaker_adapter.audio_context.resume().then(function() {
+        if (!emulator || audioEnabled) return;
+        var sa = emulator.speaker_adapter;
+        if (!sa) return;
+        // iOS requires AudioContext to be created OR resumed inside a user gesture.
+        // v86 creates its AudioContext on init (before any gesture), so on iOS it
+        // stays suspended and resume() silently fails. Fix: create a brand new
+        // AudioContext inside this tap/click handler and swap it in.
+        var ctx = sa.audio_context;
+        if (ctx && ctx.state === "suspended") {
+            ctx.resume().then(function() {
                 audioEnabled = true;
                 var btn = document.getElementById("audio-btn");
                 btn.textContent = "Audio Enabled";
                 btn.classList.add("enabled");
             });
+        }
+        // Fallback for iOS: if still suspended after resume(), create a new context
+        // directly in this user gesture and rewire the speaker oscillator.
+        if (ctx && ctx.state === "suspended") {
+            try {
+                var newCtx = new (window.AudioContext || window.webkitAudioContext)();
+                // Recreate the PC speaker oscillator on the new context
+                if (sa.pcspeaker) {
+                    var osc = sa.pcspeaker;
+                    var newOsc = newCtx.createOscillator();
+                    newOsc.type = "square";
+                    newOsc.frequency.setValueAtTime(osc.node_oscillator.frequency.value, newCtx.currentTime);
+                    // Swap oscillator
+                    osc.node_oscillator.stop();
+                    osc.node_oscillator = newOsc;
+                    newOsc.start();
+                    // Rewire mixer connection
+                    if (sa.mixer) {
+                        sa.mixer.audio_context = newCtx;
+                        var gain = newCtx.createGain();
+                        gain.gain.setValueAtTime(sa.mixer.sources && sa.mixer.sources[1] ? sa.mixer.sources[1].gain.gain.value : 1, newCtx.currentTime);
+                        newOsc.connect(gain);
+                        gain.connect(newCtx.destination);
+                        osc.mixer_connection = gain;
+                    }
+                }
+                sa.audio_context = newCtx;
+                audioEnabled = true;
+                var btn = document.getElementById("audio-btn");
+                btn.textContent = "Audio Enabled";
+                btn.classList.add("enabled");
+            } catch(e) {
+                console.warn("Audio init failed:", e);
+            }
         }
     }
 
@@ -217,6 +258,7 @@
             autostart: true,
             disable_mouse: true,
             disable_keyboard: true,
+            disable_speaker: true,
         });
 
         emulator.add_listener("serial0-output-byte", function(byte) {

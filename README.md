@@ -13,7 +13,7 @@ Now featuring **Llama 2 (15M) LLM inference** running directly on Pintos, ported
 - Boots the full Pintos kernel (VM project) in-browser via WebAssembly x86 emulation
 - **LLM inference**: Run Llama 2 (stories15M) to generate text, entirely within the Pintos OS
 - Interactive shell with user programs: `ls`, `cat`, `echo`, `cp`, `mkdir`, `rm`, and more
-- PC speaker audio emulation (`railroad162` plays "I've Been Working on My Pintos")
+- PC speaker audio emulation: Pokemon Red/Blue theme (`contest`), I have Been Working on My Pintos (`railroad162` "I've Been Working on My Pintos")
 - Serial output rendering for clean terminal display
 - PS/2 keyboard input via scancode translation
 - Mobile-friendly with virtual keyboard support
@@ -72,6 +72,7 @@ Options:
 | `mkdir <dir>` | Create a directory |
 | `rm <file>` | Remove a file |
 | `hex-dump <file>` | Hex dump a file |
+| `contest` | Play Pokemon Red/Blue title screen theme |
 | `railroad162` | Play "I've Been Working on My Pintos" |
 | `halt` | Shut down Pintos |
 

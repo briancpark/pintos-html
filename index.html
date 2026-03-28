@@ -70,7 +70,7 @@
 </head>
 <body>
     <h1>Pintos OS</h1>
-    <p class="subtitle">UC Berkeley CS 162 - Running in your browser via v86 x86 emulator</p>
+    <p class="subtitle">UC Berkeley CS 162 - Running in your browser via v86 x86 emulator. Now with LLM inference!</p>
     <div id="term-wrapper">
         <div id="term"></div>
         <textarea id="mobile-input" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false"></textarea>
@@ -84,10 +84,10 @@
     </div>
     <p class="status" id="status">Loading Pintos kernel...</p>
     <div class="info">
-        <p>This is a real Pintos OS kernel booting in a JavaScript x86 emulator. Tap the terminal to type.</p>
+        <p>A real Pintos OS kernel with Llama 2 (15M) LLM inference, booting in a JavaScript x86 emulator. Tap the terminal to type.</p>
         <p>Available commands: <code>ls</code> <code>cat</code> <code>echo</code> <code>cp</code> <code>cmp</code>
-        <code>mkdir</code> <code>pwd</code> <code>rm</code> <code>hex-dump</code> <code>halt</code></p>
-        <p>Try: <code>railroad162</code> (plays music!), <code>cat file1.txt</code>, or <code>echo hello world</code></p>
+        <code>mkdir</code> <code>pwd</code> <code>rm</code> <code>hex-dump</code> <code>halt</code> <code>llama2</code></p>
+        <p>Try: <code>llama2 model -i "Once upon a time" -n 64</code> (LLM inference!), <code>railroad162</code> (music!), <code>cat file1.txt</code></p>
     </div>
     <script src="libv86.js"></script>
     <script>
@@ -208,7 +208,7 @@
     window.onload = function() {
         emulator = new V86({
             wasm_path: "v86.wasm",
-            memory_size: 32 * 1024 * 1024,
+            memory_size: 128 * 1024 * 1024,
             vga_memory_size: 2 * 1024 * 1024,
             screen_container: document.getElementById("screen_container"),
             bios: { url: "seabios.bin" },

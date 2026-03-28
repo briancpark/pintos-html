@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh - Build Pintos kernel and create a bootable disk image
+# build.sh - Build Pintos kernel and create a bootable disk image with LLM weights
 #
 # Usage: ./build.sh [PINTOS_SRC_DIR]
 #   PINTOS_SRC_DIR: path to the pintos source tree (default: ~/pintos/src)
@@ -23,7 +23,6 @@ if ! command -v clang &>/dev/null; then
     mkdir -p ~/bin
     cat > ~/bin/clang << 'CLANG_WRAPPER'
 #!/bin/bash
-# Wrapper: delegates to gcc, filtering out clang-specific flags
 args=()
 skip_next=0
 for arg in "$@"; do
@@ -48,7 +47,7 @@ cd "$VM_DIR"
 make clean
 make
 
-echo "==> Creating bootable disk image..."
+echo "==> Creating bootable disk image (with LLM weights if present)..."
 cd "$VM_DIR/build"
 chmod u+x ../../../utils/bootable-cs162.sh
 chmod u+x ../../utils/pintos-set-cmdline
@@ -57,4 +56,4 @@ bash ../../../utils/bootable-cs162.sh --simple
 echo "==> Copying disk image to $SCRIPT_DIR..."
 cp cs162proj.dsk "$SCRIPT_DIR/cs162proj.dsk"
 
-echo "Done! Disk image: $SCRIPT_DIR/cs162proj.dsk"
+echo "Done! Disk image: $SCRIPT_DIR/cs162proj.dsk ()"

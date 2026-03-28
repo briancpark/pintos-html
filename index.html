@@ -9,7 +9,7 @@
         body {
             background: #0a0a0a;
             color: #e0e0e0;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: "SF Mono", "Fira Code", "Consolas", monospace;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -27,7 +27,7 @@
             height: 500px;
             overflow-y: auto;
             padding: 12px;
-            font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+            font-family: "SF Mono", "Fira Code", "Consolas", monospace;
             font-size: 14px;
             line-height: 1.2;
             white-space: pre-wrap;
@@ -41,7 +41,7 @@
             left: 0; top: 0;
             width: 100%; height: 100%;
             opacity: 0;
-            font-size: 16px; /* prevents iOS zoom */
+            font-size: 16px;
             border: none;
             resize: none;
             z-index: 2;
@@ -87,7 +87,7 @@
         <p>A real Pintos OS kernel with Llama 2 (15M) LLM inference, booting in a JavaScript x86 emulator. Tap the terminal to type.</p>
         <p>Available commands: <code>ls</code> <code>cat</code> <code>echo</code> <code>cp</code> <code>cmp</code>
         <code>mkdir</code> <code>pwd</code> <code>rm</code> <code>hex-dump</code> <code>halt</code> <code>llama2</code> <code>contest</code></p>
-        <p>Try: <code>llama2 model -i "Once upon a time" -n 64</code> (LLM inference!), <code>contest</code> (Pokemon Red/Blue theme!), <code>railroad162</code> (music!), <code>cat file1.txt</code></p>
+        <p>Try: <code>contest</code> (Pokemon Red/Blue theme!), <code>railroad162</code> (music!), <code>llama2 model -i "Once upon a time" -n 64</code></p>
     </div>
     <script src="libv86.js"></script>
     <script>
@@ -97,6 +97,59 @@
     var mobileInput = document.getElementById("mobile-input");
     var audioEnabled = false;
 
+    /* ---- Custom PC Speaker ----
+     * v86's built-in speaker creates AudioContext before user gesture (blocked
+     * by iOS Safari) and routes to left channel only. We disable it and create
+     * our own AudioContext on first tap, connected to destination (stereo). */
+    var speakerCtx = null, speakerOsc = null, speakerGain = null;
+    var speakerListenersAdded = false;
+
+    function setupSpeakerListeners() {
+        if (speakerListenersAdded || !emulator) return;
+        speakerListenersAdded = true;
+        emulator.add_listener("pcspeaker-enable", function() {
+            if (speakerGain && speakerCtx)
+                speakerGain.gain.setValueAtTime(0.3, speakerCtx.currentTime);
+        });
+        emulator.add_listener("pcspeaker-disable", function() {
+            if (speakerGain && speakerCtx)
+                speakerGain.gain.setValueAtTime(0, speakerCtx.currentTime);
+        });
+        emulator.add_listener("pcspeaker-update", function(data) {
+            if (!speakerOsc || !speakerCtx) return;
+            var mode = data[0], reload = data[1];
+            if (mode === 3 && reload > 0) {
+                var freq = 1193181.6666 / reload;
+                if (freq > 0 && freq < 20000)
+                    speakerOsc.frequency.setValueAtTime(freq, speakerCtx.currentTime);
+            }
+        });
+    }
+
+    function enableAudio() {
+        if (audioEnabled) return;
+        if (!speakerCtx) {
+            try {
+                speakerCtx = new (window.AudioContext || window.webkitAudioContext)();
+                speakerOsc = speakerCtx.createOscillator();
+                speakerOsc.type = "square";
+                speakerOsc.frequency.setValueAtTime(440, speakerCtx.currentTime);
+                speakerGain = speakerCtx.createGain();
+                speakerGain.gain.setValueAtTime(0, speakerCtx.currentTime);
+                speakerOsc.connect(speakerGain);
+                speakerGain.connect(speakerCtx.destination);
+                speakerOsc.start();
+            } catch(e) { console.warn("Audio init failed:", e); return; }
+        }
+        if (speakerCtx.state === "suspended") speakerCtx.resume();
+        setupSpeakerListeners();
+        audioEnabled = true;
+        var btn = document.getElementById("audio-btn");
+        btn.textContent = "Audio Enabled";
+        btn.classList.add("enabled");
+    }
+
+    /* ---- Keyboard ---- */
     var SCANCODES = {
         "a":0x1E,"b":0x30,"c":0x2E,"d":0x20,"e":0x12,"f":0x21,"g":0x22,
         "h":0x23,"i":0x17,"j":0x24,"k":0x25,"l":0x26,"m":0x32,"n":0x31,
@@ -130,70 +183,15 @@
         emulator.keyboard_send_scancodes(codes);
     }
 
-    function enableAudio() {
-        if (!emulator || audioEnabled) return;
-        var sa = emulator.speaker_adapter;
-        if (!sa) return;
-        // iOS requires AudioContext to be created OR resumed inside a user gesture.
-        // v86 creates its AudioContext on init (before any gesture), so on iOS it
-        // stays suspended and resume() silently fails. Fix: create a brand new
-        // AudioContext inside this tap/click handler and swap it in.
-        var ctx = sa.audio_context;
-        if (ctx && ctx.state === "suspended") {
-            ctx.resume().then(function() {
-                audioEnabled = true;
-                var btn = document.getElementById("audio-btn");
-                btn.textContent = "Audio Enabled";
-                btn.classList.add("enabled");
-            });
-        }
-        // Fallback for iOS: if still suspended after resume(), create a new context
-        // directly in this user gesture and rewire the speaker oscillator.
-        if (ctx && ctx.state === "suspended") {
-            try {
-                var newCtx = new (window.AudioContext || window.webkitAudioContext)();
-                // Recreate the PC speaker oscillator on the new context
-                if (sa.pcspeaker) {
-                    var osc = sa.pcspeaker;
-                    var newOsc = newCtx.createOscillator();
-                    newOsc.type = "square";
-                    newOsc.frequency.setValueAtTime(osc.node_oscillator.frequency.value, newCtx.currentTime);
-                    // Swap oscillator
-                    osc.node_oscillator.stop();
-                    osc.node_oscillator = newOsc;
-                    newOsc.start();
-                    // Rewire mixer connection
-                    if (sa.mixer) {
-                        sa.mixer.audio_context = newCtx;
-                        var gain = newCtx.createGain();
-                        gain.gain.setValueAtTime(sa.mixer.sources && sa.mixer.sources[1] ? sa.mixer.sources[1].gain.gain.value : 1, newCtx.currentTime);
-                        newOsc.connect(gain);
-                        gain.connect(newCtx.destination);
-                        osc.mixer_connection = gain;
-                    }
-                }
-                sa.audio_context = newCtx;
-                audioEnabled = true;
-                var btn = document.getElementById("audio-btn");
-                btn.textContent = "Audio Enabled";
-                btn.classList.add("enabled");
-            } catch(e) {
-                console.warn("Audio init failed:", e);
-            }
-        }
-    }
-
     function focusInput() {
         mobileInput.focus();
         term.classList.add("focused");
         if (!audioEnabled) enableAudio();
     }
 
-    // Desktop: keydown on the hidden textarea
     mobileInput.addEventListener("keydown", function(e) {
         if (!emulator || !emulator.is_running()) return;
         if (!audioEnabled) enableAudio();
-
         if (e.key === "Enter") {
             e.preventDefault();
             emulator.keyboard_send_scancodes([0x1C, 0x9C]);
@@ -210,18 +208,14 @@
         }
     });
 
-    // Mobile: input event fires when virtual keyboard types
     var prevValue = "";
-    mobileInput.addEventListener("input", function(e) {
+    mobileInput.addEventListener("input", function() {
         if (!emulator || !emulator.is_running()) return;
         if (!audioEnabled) enableAudio();
         var cur = mobileInput.value;
-
         if (cur.length < prevValue.length) {
-            // Deletion (backspace)
             emulator.keyboard_send_scancodes([0x0E, 0x8E]);
         } else if (cur.length > prevValue.length) {
-            // New characters typed
             var added = cur.slice(prevValue.length);
             for (var i = 0; i < added.length; i++) {
                 if (added[i] === "\n") {
@@ -232,20 +226,13 @@
             }
         }
         prevValue = cur;
-        // Prevent textarea from growing too large
-        if (cur.length > 100) {
-            mobileInput.value = "";
-            prevValue = "";
-        }
+        if (cur.length > 100) { mobileInput.value = ""; prevValue = ""; }
     });
 
-    mobileInput.addEventListener("blur", function() {
-        term.classList.remove("focused");
-    });
-    mobileInput.addEventListener("focus", function() {
-        term.classList.add("focused");
-    });
+    mobileInput.addEventListener("blur", function() { term.classList.remove("focused"); });
+    mobileInput.addEventListener("focus", function() { term.classList.add("focused"); });
 
+    /* ---- Emulator ---- */
     window.onload = function() {
         emulator = new V86({
             wasm_path: "v86.wasm",
@@ -282,8 +269,10 @@
         term.textContent = "";
         mobileInput.value = "";
         prevValue = "";
+        speakerListenersAdded = false;
         emulator.restart();
         document.getElementById("status").textContent = "Restarting...";
+        if (audioEnabled) setupSpeakerListeners();
     }
     </script>
     <p style="margin-top: 30px; color: #546e7a; font-size: 0.75em;">Created by Brian Park</p>

@@ -185,7 +185,8 @@ function xhrRange(url, start, end) {
 }
 
 // Single full GET with progress; browser decompresses any Content-Encoding.
-function xhrFull(url, statusEl, fillEl) {
+// Rejects a short read so the surrounding retry re-fetches a complete disk.
+function xhrFull(url, statusEl, fillEl, total) {
     return new Promise(function(resolve, reject) {
         var xhr = new XMLHttpRequest();
         xhr.open("GET", url, true);
@@ -200,8 +201,13 @@ function xhrFull(url, statusEl, fillEl) {
             }
         };
         xhr.onload = function() {
-            if (xhr.status === 200 || xhr.status === 206) { fillEl.style.width = "100%"; resolve(xhr.response); }
-            else reject(new Error("HTTP " + xhr.status));
+            if (xhr.status !== 200 && xhr.status !== 206) { reject(new Error("HTTP " + xhr.status)); return; }
+            if (total && xhr.response && xhr.response.byteLength !== total) {
+                reject(new Error("incomplete: " + xhr.response.byteLength + "/" + total));
+                return;
+            }
+            fillEl.style.width = "100%";
+            resolve(xhr.response);
         };
         xhr.onerror = function() { reject(new Error("network error")); };
         xhr.send();
@@ -227,7 +233,7 @@ async function downloadDisk(url, statusEl, fillEl, total) {
 
     if (!honestRanges) {
         // Ranges are compressed/ignored (GitHub Pages gzip) -> single GET.
-        return await retry(function() { return xhrFull(url, statusEl, fillEl); }, 3);
+        return await retry(function() { return xhrFull(url, statusEl, fillEl, total); }, 3);
     }
 
     // Honest byte ranges (OCF/Apache) -> chunk to avoid one huge transfer.
@@ -246,6 +252,14 @@ async function downloadDisk(url, statusEl, fillEl, total) {
     return out.buffer;
 }
 
+// Reject a truncated/corrupt download (e.g. a Pages gzip transfer cut short)
+// before it boots into a recursive kernel panic: exact size + MBR boot signature.
+function verifyDisk(buf, total) {
+    if (!buf || buf.byteLength !== total) return false;
+    var sig = new Uint8Array(buf, 510, 2);
+    return sig[0] === 0x55 && sig[1] === 0xAA;
+}
+
 window.onload = async function() {
     var statusEl = document.getElementById("status");
     var track = document.getElementById("progress-track");
@@ -257,6 +271,9 @@ window.onload = async function() {
     for (var attempt = 1; ; attempt++) {
         try {
             diskBuffer = await downloadDisk("cs162proj.dsk?v=20260603", statusEl, fillEl, 84639744);
+            if (!verifyDisk(diskBuffer, 84639744)) {
+                throw new Error("disk corrupt/incomplete (" + (diskBuffer ? diskBuffer.byteLength : 0) + " bytes)");
+            }
             break;
         } catch (e) {
             if (attempt >= 3) {

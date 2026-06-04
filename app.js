@@ -33,8 +33,13 @@ function setupSpeakerListeners() {
     });
 }
 
+// Idempotent: safe to call on every user gesture. We must NOT early-return when
+// audioEnabled is already set, because the AudioContext may have been created in
+// a "suspended" state (when first called programmatically from emulator-ready,
+// with no user gesture) and can only be resumed from within a real gesture. On
+// origins without prior media engagement (e.g. a fresh GitHub Pages domain) the
+// context always starts suspended, so every gesture must retry resume().
 function enableAudio() {
-    if (audioEnabled) return;
     if (!speakerCtx) {
         try {
             speakerCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -50,10 +55,12 @@ function enableAudio() {
     }
     if (speakerCtx.state === "suspended") speakerCtx.resume();
     setupSpeakerListeners();
-    audioEnabled = true;
-    var btn = document.getElementById("audio-btn");
-    btn.textContent = "Audio Enabled";
-    btn.classList.add("enabled");
+    if (!audioEnabled) {
+        audioEnabled = true;
+        var btn = document.getElementById("audio-btn");
+        btn.textContent = "Audio Enabled";
+        btn.classList.add("enabled");
+    }
 }
 
 /* ---- Keyboard ---- */
@@ -93,12 +100,12 @@ function sendKey(ch) {
 function focusInput() {
     mobileInput.focus();
     term.classList.add("focused");
-    if (!audioEnabled) enableAudio();
+    enableAudio();
 }
 
 mobileInput.addEventListener("keydown", function(e) {
     if (!emulator || !emulator.is_running()) return;
-    if (!audioEnabled) enableAudio();
+    enableAudio();
     if (e.key === "Enter") {
         e.preventDefault();
         emulator.keyboard_send_scancodes([0x1C, 0x9C]);
@@ -118,7 +125,7 @@ mobileInput.addEventListener("keydown", function(e) {
 var prevValue = "";
 mobileInput.addEventListener("input", function() {
     if (!emulator || !emulator.is_running()) return;
-    if (!audioEnabled) enableAudio();
+    enableAudio();
     var cur = mobileInput.value;
     if (cur.length < prevValue.length) {
         emulator.keyboard_send_scancodes([0x0E, 0x8E]);

@@ -27,7 +27,7 @@ jobs:
       - name: Assemble static site
         run: |
           mkdir -p _site
-          cp index.html .nojekyll libv86.js v86.wasm seabios.bin vgabios.bin cs162proj.dsk _site/
+          cp index.html style.css app.js .nojekyll libv86.js v86.wasm seabios.bin vgabios.bin cs162proj.dsk _site/
           ls -l _site
 
       - name: Configure Pages

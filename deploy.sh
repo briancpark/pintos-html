@@ -27,7 +27,7 @@ done
 
 # Copy HTML
 echo "    Copying index.html..."
-cp "$SCRIPT_DIR/index.html" "$DEPLOY_DIR/index.html"
+for f in index.html style.css app.js; do cp "$SCRIPT_DIR/$f" "$DEPLOY_DIR/$f"; done
 
 # Copy disk image
 if [ -f "$SCRIPT_DIR/cs162proj.dsk" ]; then

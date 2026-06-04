@@ -106,6 +106,7 @@ function focusInput() {
 mobileInput.addEventListener("keydown", function(e) {
     if (!emulator || !emulator.is_running()) return;
     enableAudio();
+    if (window.PintosBG) window.PintosBG.key();
     if (e.key === "Enter") {
         e.preventDefault();
         emulator.keyboard_send_scancodes([0x1C, 0x9C]);
@@ -126,6 +127,7 @@ var prevValue = "";
 mobileInput.addEventListener("input", function() {
     if (!emulator || !emulator.is_running()) return;
     enableAudio();
+    if (window.PintosBG) window.PintosBG.key();
     var cur = mobileInput.value;
     if (cur.length < prevValue.length) {
         emulator.keyboard_send_scancodes([0x0E, 0x8E]);
@@ -286,6 +288,7 @@ window.onload = async function() {
     });
 
     emulator.add_listener("serial0-output-byte", function(byte) {
+        if (window.PintosBG) window.PintosBG.out();
         var ch = String.fromCharCode(byte);
         if (byte === 0x08) {
             term.textContent = term.textContent.slice(0, -1);
@@ -295,9 +298,24 @@ window.onload = async function() {
         term.scrollTop = term.scrollHeight;
     });
 
+    // Drive the background animation from the PC speaker too, independent of
+    // whether audio output is enabled (these bus events fire regardless).
+    emulator.add_listener("pcspeaker-update", function(data) {
+        if (!window.PintosBG) return;
+        var mode = data[0], reload = data[1];
+        if (mode === 3 && reload > 0) {
+            var freq = 1193181.6666 / reload;
+            if (freq > 0 && freq < 20000) window.PintosBG.tone(freq);
+        }
+    });
+    emulator.add_listener("pcspeaker-enable", function() {
+        if (window.PintosBG) window.PintosBG.burst(0.5);
+    });
+
     emulator.add_listener("emulator-ready", function() {
         document.getElementById("status").textContent = "Pintos kernel booted! Tap terminal to type.";
         document.getElementById("status").style.color = "#66bb6a";
+        if (window.PintosBG) window.PintosBG.burst(1.0);
         focusInput();
     });
 };

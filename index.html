@@ -233,7 +233,69 @@
     mobileInput.addEventListener("focus", function() { term.classList.add("focused"); });
 
     /* ---- Emulator ---- */
-    window.onload = function() {
+    // Download the disk image in large chunks (HTTP Range requests) with a progress
+    // indicator, then boot from the in-memory buffer. We use XMLHttpRequest, NOT
+    // fetch(): v86 itself uses XHR and it works here, whereas fetch() was failing
+    // outright ("Failed to fetch") in some browsers/extensions/proxies. Chunked
+    // ranges also avoid one giant 84MB response (which some networks reset) and
+    // v86's async mode (tiny 256-byte on-demand reads that stall the CPU on boot).
+    function xhrRange(url, start, end) {
+        return new Promise(function(resolve, reject) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", url, true);
+            xhr.responseType = "arraybuffer";
+            xhr.setRequestHeader("Range", "bytes=" + start + "-" + end);
+            xhr.onload = function() {
+                if (xhr.status === 206 || xhr.status === 200) {
+                    resolve({ status: xhr.status, buffer: xhr.response });
+                } else {
+                    reject(new Error("HTTP " + xhr.status));
+                }
+            };
+            xhr.onerror = function() { reject(new Error("network error")); };
+            xhr.send();
+        });
+    }
+
+    async function downloadDisk(url, statusEl, total) {
+        var CHUNK = 8 * 1024 * 1024;
+        var out = new Uint8Array(total);
+        var received = 0;
+        for (var start = 0; start < total; start += CHUNK) {
+            var end = Math.min(start + CHUNK, total) - 1;
+            var r = null;
+            for (var attempt = 1; ; attempt++) {
+                try { r = await xhrRange(url, start, end); break; }
+                catch (err) {
+                    if (attempt >= 4) throw err;
+                    await new Promise(function(res) { setTimeout(res, 400 * attempt); });
+                }
+            }
+            if (r.status === 200) {
+                // Server ignored the Range header and returned the whole file.
+                statusEl.textContent = "Downloading Pintos disk… 100%";
+                return r.buffer;
+            }
+            var part = new Uint8Array(r.buffer);
+            out.set(part, start);
+            received += part.length;
+            statusEl.textContent = "Downloading Pintos disk… " + Math.floor(received / total * 100) + "%";
+        }
+        return out.buffer;
+    }
+
+    window.onload = async function() {
+        var statusEl = document.getElementById("status");
+        var diskBuffer;
+        try {
+            diskBuffer = await downloadDisk("cs162proj.dsk?v=20260603", statusEl, 84639744);
+        } catch (e) {
+            statusEl.textContent = "Failed to download Pintos disk: " + e.message;
+            statusEl.style.color = "#e57373";
+            return;
+        }
+        statusEl.textContent = "Booting Pintos kernel…";
+
         emulator = new V86({
             wasm_path: "v86.wasm",
             memory_size: 128 * 1024 * 1024,
@@ -241,7 +303,7 @@
             screen_container: document.getElementById("screen_container"),
             bios: { url: "seabios.bin" },
             vga_bios: { url: "vgabios.bin" },
-            hda: { url: "cs162proj.dsk" },
+            hda: { buffer: diskBuffer },
             autostart: true,
             disable_mouse: true,
             disable_keyboard: true,

@@ -23,7 +23,7 @@ Now featuring **Llama 2 (15M) LLM inference** running directly on Pintos, ported
 Once the shell boots, run:
 
 ```
-llama2 model -i "Once upon a time" -n 64
+llama2 model -i Once upon a time -n 64
 ```
 
 This loads the 15M parameter Llama 2 model (split into 8MB chunks to fit the Pintos filesystem limit) and generates text token by token. The model weights (~60MB) are baked into the disk image and loaded at runtime.

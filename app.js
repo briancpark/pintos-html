@@ -147,14 +147,43 @@ mobileInput.addEventListener("blur", function() { term.classList.remove("focused
 mobileInput.addEventListener("focus", function() { term.classList.add("focused"); });
 
 /* ---- Emulator ---- */
-// Download the whole disk image with one XMLHttpRequest (the browser handles
-// gzip transparently) and boot from the in-memory buffer. We use XHR rather
-// than:
-//   - fetch(): failed outright ("Failed to fetch") in some browsers/proxies;
-//   - chunked Range requests: GitHub Pages/Cloudflare gzip-compresses the disk
-//     and applies Range to the *compressed* bytes, so offsets past the
-//     compressed size return HTTP 416.
-function downloadDisk(url, statusEl, fillEl) {
+// Download the 84MB disk into memory and boot from it. We must support two very
+// different servers:
+//   - OCF/Apache: serves the file uncompressed. A single 84MB GET gets reset by
+//     some networks ("network error"), so we download in 8MB Range chunks.
+//   - GitHub Pages/Cloudflare: gzip-compresses the disk and applies Range to the
+//     *compressed* bytes, so real offsets past the compressed size return HTTP
+//     416. There a single GET is correct (the browser decompresses transparently).
+// We probe the first chunk and pick the strategy from the Content-Range total.
+// (XHR, not fetch() — fetch() failed outright in some browsers/proxies.)
+var CHUNK_SIZE = 8 * 1024 * 1024;
+
+function setProgress(statusEl, fillEl, received, total) {
+    var pct = Math.min(100, Math.floor(received / total * 100));
+    fillEl.style.width = pct + "%";
+    statusEl.textContent = "Downloading Pintos disk… " + pct + "%";
+}
+
+// One Range request -> {status, buffer, total} (total parsed from Content-Range).
+function xhrRange(url, start, end) {
+    return new Promise(function(resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("GET", url, true);
+        xhr.responseType = "arraybuffer";
+        xhr.setRequestHeader("Range", "bytes=" + start + "-" + end);
+        xhr.onload = function() {
+            if (xhr.status !== 206 && xhr.status !== 200) { reject(new Error("HTTP " + xhr.status)); return; }
+            var total = -1, cr = xhr.getResponseHeader("Content-Range");
+            if (cr) { var m = cr.match(/\/(\d+)\s*$/); if (m) total = parseInt(m[1], 10); }
+            resolve({ status: xhr.status, buffer: xhr.response, total: total });
+        };
+        xhr.onerror = function() { reject(new Error("network error")); };
+        xhr.send();
+    });
+}
+
+// Single full GET with progress; browser decompresses any Content-Encoding.
+function xhrFull(url, statusEl, fillEl) {
     return new Promise(function(resolve, reject) {
         var xhr = new XMLHttpRequest();
         xhr.open("GET", url, true);
@@ -169,16 +198,50 @@ function downloadDisk(url, statusEl, fillEl) {
             }
         };
         xhr.onload = function() {
-            if (xhr.status === 200 || xhr.status === 206) {
-                fillEl.style.width = "100%";
-                resolve(xhr.response);
-            } else {
-                reject(new Error("HTTP " + xhr.status));
-            }
+            if (xhr.status === 200 || xhr.status === 206) { fillEl.style.width = "100%"; resolve(xhr.response); }
+            else reject(new Error("HTTP " + xhr.status));
         };
         xhr.onerror = function() { reject(new Error("network error")); };
         xhr.send();
     });
+}
+
+async function retry(fn, n) {
+    for (var attempt = 1; ; attempt++) {
+        try { return await fn(); }
+        catch (e) { if (attempt >= n) throw e; await new Promise(function(r) { setTimeout(r, 500 * attempt); }); }
+    }
+}
+
+async function downloadDisk(url, statusEl, fillEl, total) {
+    // Probe first chunk to decide strategy. Any probe failure (e.g. Pages may
+    // error decoding a partial gzip range) just routes us to the single GET.
+    var first = null;
+    try { first = await retry(function() { return xhrRange(url, 0, CHUNK_SIZE - 1); }, 2); }
+    catch (e) { first = null; }
+    var expectFirst = Math.min(CHUNK_SIZE, total);
+    var honestRanges = !!first && first.status === 206 && first.total === total &&
+                       first.buffer && first.buffer.byteLength === expectFirst;
+
+    if (!honestRanges) {
+        // Ranges are compressed/ignored (GitHub Pages gzip) -> single GET.
+        return await retry(function() { return xhrFull(url, statusEl, fillEl); }, 3);
+    }
+
+    // Honest byte ranges (OCF/Apache) -> chunk to avoid one huge transfer.
+    var out = new Uint8Array(total);
+    out.set(new Uint8Array(first.buffer), 0);
+    var received = first.buffer.byteLength;
+    setProgress(statusEl, fillEl, received, total);
+    for (var start = CHUNK_SIZE; start < total; start += CHUNK_SIZE) {
+        var end = Math.min(start + CHUNK_SIZE, total) - 1;
+        var s = start, e2 = end;
+        var r = await retry(function() { return xhrRange(url, s, e2); }, 4);
+        out.set(new Uint8Array(r.buffer), s);
+        received += r.buffer.byteLength;
+        setProgress(statusEl, fillEl, received, total);
+    }
+    return out.buffer;
 }
 
 window.onload = async function() {
@@ -191,7 +254,7 @@ window.onload = async function() {
     statusEl.textContent = "Downloading Pintos disk… 0%";
     for (var attempt = 1; ; attempt++) {
         try {
-            diskBuffer = await downloadDisk("cs162proj.dsk?v=20260603", statusEl, fillEl);
+            diskBuffer = await downloadDisk("cs162proj.dsk?v=20260603", statusEl, fillEl, 84639744);
             break;
         } catch (e) {
             if (attempt >= 3) {
